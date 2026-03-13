@@ -25,4 +25,3 @@ dist-ssr
 
 # Python artifacts
 backend/__pycache__/
-data/external/
