@@ -10,7 +10,8 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 
 from analytics_data import build_analytics_dataset
-from ml_model import ModelNotTrainedError, predict_from_features, predict_from_wallet_address, train_wallet_risk_model
+from fraud_model import ModelNotTrainedError, predict_from_features, predict_from_wallet_address, train_wallet_risk_model
+from multi_model_trainer import train_all_models
 from wallet_analyzer import analyze_transactions
 
 # ---------------------------------------------------------------------------
@@ -62,6 +63,8 @@ def index():
             "/api/ml/status",
             "/api/ml/train",
             "/api/ml/predict",
+            "/api/ml/train-all",
+            "/api/ml/models",
         ],
     }), 200
 
@@ -227,6 +230,56 @@ def ml_status():
         "model_path": model_path,
         "model_available": os.path.exists(model_path),
     }), 200
+
+
+@app.route("/api/ml/train-all", methods=["POST"])
+def ml_train_all():
+    """
+    POST /api/ml/train-all
+    Optional JSON body:
+    {
+      "dataset_path": "...",
+      "artifact_dir": "...",
+      "fetch_external": true,
+      "random_state": 42
+    }
+    """
+    body = request.get_json(silent=True) or {}
+
+    try:
+        result = train_all_models(
+            dataset_path=body.get("dataset_path"),
+            artifact_dir=body.get("artifact_dir"),
+            fetch_external=bool(body.get("fetch_external", True)),
+            random_state=int(body.get("random_state", 42)),
+        )
+        return jsonify({"message": "All ML models trained successfully", "result": result}), 200
+    except (FileNotFoundError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": f"Multi-model training failed: {exc}"}), 500
+
+
+@app.route("/api/ml/models", methods=["GET"])
+def ml_models_status():
+    model_dir = os.environ.get("WALLET_ML_MODEL_DIR", os.path.join(BACKEND_DIR, "models"))
+    names = [
+        "wallet_risk_model.joblib",
+        "transaction_anomaly_model.joblib",
+        "counterparty_contagion_model.joblib",
+        "behavior_shift_model.joblib",
+        "entity_type_model.joblib",
+        "alert_prioritizer_model.joblib",
+    ]
+    payload = []
+    for name in names:
+        path = os.path.join(model_dir, name)
+        payload.append({
+            "name": name,
+            "path": path,
+            "available": os.path.exists(path),
+        })
+    return jsonify({"model_dir": model_dir, "models": payload}), 200
 
 
 @app.route("/analyze_wallet", methods=["POST"])
