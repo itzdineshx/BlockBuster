@@ -16,6 +16,8 @@ type WorkflowStep = {
   note?: string;
 };
 
+type ApprovalAction = "RELEASE" | "HOLD" | "FREEZE";
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -69,6 +71,11 @@ export function ReviewPage() {
   const [blacklisted, setBlacklisted] = useState(false);
   const [restrictionState, setRestrictionState] = useState("Not evaluated");
   const [authorityDecision, setAuthorityDecision] = useState("Pending");
+  const [showApprovalPopup, setShowApprovalPopup] = useState(false);
+  const [recommendedAction, setRecommendedAction] = useState<ApprovalAction | null>(null);
+  const [selectedAction, setSelectedAction] = useState<ApprovalAction | null>(null);
+  const [xAiExplanation, setXAiExplanation] = useState("");
+  const [approvalCompletedAt, setApprovalCompletedAt] = useState<string | null>(null);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -98,6 +105,11 @@ export function ReviewPage() {
     setSteps((prev) => prev.map((step) => ({ ...step, status: "pending", note: undefined })));
     setWorkflowError(null);
     setAuthorityDecision("Pending");
+    setShowApprovalPopup(false);
+    setRecommendedAction(null);
+    setSelectedAction(null);
+    setXAiExplanation("");
+    setApprovalCompletedAt(null);
     setRestrictionState("Not evaluated");
     setBlacklisted(false);
     setAnalysis(null);
@@ -130,6 +142,247 @@ export function ReviewPage() {
   };
 
   const buildSubmissionPdf = (result: WalletAnalysisResponse) => {
+    if (result.investigation_report) {
+      const report = result.investigation_report;
+      const doc = new jsPDF("p", "mm", "a4");
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 10;
+      const contentWidth = pageWidth - margin * 2;
+      let y = margin;
+
+      const ensureSpace = (needed: number) => {
+        if (y + needed <= pageHeight - margin) return;
+        doc.addPage();
+        y = margin;
+      };
+
+      const addWrapped = (text: string, size = 10.5, lineGap = 4.8, indent = 0) => {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(size);
+        const lines = doc.splitTextToSize(text, contentWidth - indent);
+        const blockHeight = lines.length * lineGap;
+        ensureSpace(blockHeight + 2);
+        doc.setTextColor(24, 35, 50);
+        doc.text(lines, margin + indent, y);
+        y += blockHeight + 1;
+      };
+
+      const drawCard = (x: number, top: number, w: number, h: number, title: string, value: string, tone: "normal" | "danger" | "warn" = "normal") => {
+        const bg = tone === "danger" ? [255, 239, 239] : tone === "warn" ? [255, 248, 232] : [241, 247, 255];
+        const border = tone === "danger" ? [222, 87, 87] : tone === "warn" ? [220, 161, 35] : [89, 142, 200];
+        doc.setFillColor(bg[0], bg[1], bg[2]);
+        doc.setDrawColor(border[0], border[1], border[2]);
+        doc.roundedRect(x, top, w, h, 2, 2, "FD");
+        doc.setTextColor(65, 90, 120);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.8);
+        doc.text(title, x + 3, top + 5.2);
+        doc.setTextColor(15, 28, 45);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11.2);
+        doc.text(value, x + 3, top + 11.3);
+      };
+
+      const addSectionTitle = (title: string) => {
+        ensureSpace(9);
+        doc.setTextColor(12, 36, 66);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12.5);
+        doc.text(title, margin, y);
+        y += 5.5;
+        doc.setDrawColor(194, 210, 228);
+        doc.line(margin, y, pageWidth - margin, y);
+        y += 3.5;
+      };
+
+      const drawRiskGauge = (centerX: number, centerY: number, radius: number, score: number) => {
+        let prevX = centerX - radius;
+        let prevY = centerY;
+        for (let i = 1; i <= 100; i++) {
+          const t = i / 100;
+          const angle = Math.PI * (1 - t);
+          const x = centerX + Math.cos(angle) * radius;
+          const yPos = centerY - Math.sin(angle) * radius;
+          if (i <= 35) doc.setDrawColor(47, 165, 92);
+          else if (i <= 70) doc.setDrawColor(230, 164, 33);
+          else doc.setDrawColor(210, 72, 72);
+          doc.setLineWidth(1.6);
+          doc.line(prevX, prevY, x, yPos);
+          prevX = x;
+          prevY = yPos;
+        }
+        const clamped = Math.max(0, Math.min(100, score));
+        const a = Math.PI * (1 - clamped / 100);
+        const nx = centerX + Math.cos(a) * (radius - 1.5);
+        const ny = centerY - Math.sin(a) * (radius - 1.5);
+        doc.setDrawColor(20, 30, 45);
+        doc.setLineWidth(1.2);
+        doc.line(centerX, centerY, nx, ny);
+        doc.setFillColor(20, 30, 45);
+        doc.circle(centerX, centerY, 1.5, "F");
+      };
+
+      doc.setFillColor(7, 25, 49);
+      doc.rect(0, 0, pageWidth, 36, "F");
+      doc.setTextColor(235, 245, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("Cryptocurrency Investigation Report", margin, 13);
+      doc.setFontSize(9.5);
+      doc.setTextColor(176, 204, 234);
+      doc.text("System: Dark Web Crypto Currency Flow Analyzer", margin, 19);
+      doc.text("Generated by: BlockBuster", margin, 23.5);
+      doc.text(`Date: ${report.metadata.date}  |  Report ID: ${report.metadata.report_id}`, margin, 28);
+      doc.text("Classification: Confidential - Cybersecurity Investigation Use", margin, 32.5);
+
+      y = 42;
+      const riskTone = report.risk_assessment.risk_score >= 75 ? "danger" : report.risk_assessment.risk_score >= 50 ? "warn" : "normal";
+      const cardW = (contentWidth - 8) / 3;
+      drawCard(margin, y, cardW, 14, "Risk Score", `${report.risk_assessment.risk_score.toFixed(1)} / 100`, riskTone);
+      drawCard(margin + cardW + 4, y, cardW, 14, "Risk Level", report.risk_assessment.risk_level, riskTone);
+      drawCard(margin + cardW * 2 + 8, y, cardW, 14, "Suspicious Tx", String(report.suspicious_transaction_summary.suspicious_count), "warn");
+      y += 18;
+
+      addSectionTitle("1. Executive Summary");
+      addWrapped(report.executive_summary);
+
+      addSectionTitle("2. Wallet Information");
+      addWrapped(`Wallet Address: ${report.wallet_information.wallet_address}`);
+      addWrapped(`Blockchain Network: ${report.wallet_information.blockchain_network}`);
+      addWrapped(`Total Transactions: ${report.wallet_information.total_transactions}`);
+      addWrapped(`First Transaction: ${report.wallet_information.first_transaction}`);
+      addWrapped(`Last Transaction: ${report.wallet_information.last_transaction}`);
+
+      addSectionTitle("3. Risk Assessment");
+      addWrapped(`Risk Score: ${report.risk_assessment.risk_score.toFixed(1)} / 100`);
+      addWrapped(`Risk Level: ${report.risk_assessment.risk_level}`);
+      addWrapped("Indicators Detected:");
+      for (const item of report.risk_assessment.indicators_detected) addWrapped(`- ${item}`, 10.3, 4.8, 2);
+
+      addSectionTitle("4. Suspicious Transaction Summary");
+      addWrapped(`Number of Suspicious Transactions: ${report.suspicious_transaction_summary.suspicious_count}`);
+      addWrapped("Example Transactions:");
+      for (const item of report.suspicious_transaction_summary.example_transactions.slice(0, 3)) {
+        addWrapped(`- Hash: ${item.transaction_hash}`, 10.1, 4.6, 2);
+        addWrapped(`  Amount: ${item.amount_eth} ETH | Date: ${item.date}`, 10.1, 4.6, 2);
+      }
+
+      addSectionTitle("5. Transaction Flow Analysis");
+      addWrapped(`Transaction Path: ${report.transaction_flow_analysis.transaction_path}`);
+      addWrapped(`Possible Pattern: ${report.transaction_flow_analysis.possible_pattern}`);
+
+      doc.addPage();
+      y = margin;
+      doc.setFillColor(10, 36, 66);
+      doc.rect(0, 0, pageWidth, 20, "F");
+      doc.setTextColor(235, 245, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text("Visual Intelligence Dashboard", margin, 12.5);
+      y = 28;
+
+      doc.setFillColor(246, 250, 255);
+      doc.setDrawColor(189, 209, 232);
+      doc.roundedRect(margin, y, contentWidth, 52, 2, 2, "FD");
+      doc.setTextColor(18, 40, 68);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11.5);
+      doc.text("Risk Gauge", margin + 4, y + 7);
+      drawRiskGauge(margin + 38, y + 36, 20, report.risk_assessment.risk_score);
+      doc.setTextColor(22, 35, 55);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text(`${report.risk_assessment.risk_score.toFixed(1)} / 100`, margin + 64, y + 24);
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Level: ${report.risk_assessment.risk_level}`, margin + 64, y + 31);
+      doc.text(`Network: ${report.wallet_information.blockchain_network}`, margin + 64, y + 37);
+      y += 59;
+
+      doc.setFillColor(246, 250, 255);
+      doc.setDrawColor(189, 209, 232);
+      doc.roundedRect(margin, y, contentWidth, 58, 2, 2, "FD");
+      doc.setTextColor(18, 40, 68);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11.5);
+      doc.text("Signal Intensity", margin + 4, y + 7);
+
+      const maxSignal = Math.max(...report.visuals.signal_breakdown.map((s) => s.value), 1);
+      report.visuals.signal_breakdown.forEach((signal, idx) => {
+        const barY = y + 14 + idx * 13;
+        const barX = margin + 52;
+        const barW = contentWidth - 62;
+        const width = barW * (signal.value / maxSignal);
+        doc.setTextColor(38, 60, 88);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9.5);
+        doc.text(signal.name, margin + 4, barY + 3.6);
+        doc.setFillColor(221, 231, 244);
+        doc.rect(barX, barY, barW, 5.4, "F");
+        doc.setFillColor(47, 136, 219);
+        doc.rect(barX, barY, Math.max(1, width), 5.4, "F");
+        doc.setTextColor(30, 45, 62);
+        doc.text(String(signal.value), barX + barW + 1.5, barY + 3.8);
+      });
+      y += 65;
+
+      doc.setFillColor(246, 250, 255);
+      doc.setDrawColor(189, 209, 232);
+      doc.roundedRect(margin, y, contentWidth, 44, 2, 2, "FD");
+      doc.setTextColor(18, 40, 68);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11.5);
+      doc.text("Transaction Flow", margin + 4, y + 7);
+
+      const nodes = report.transaction_flow_analysis.transaction_path.split("->").map((n) => n.trim()).slice(0, 4);
+      const nodeW = 37;
+      const gap = (contentWidth - nodeW * 4) / 3;
+      const nodeY = y + 18;
+      nodes.forEach((node, i) => {
+        const nx = margin + i * (nodeW + gap);
+        doc.setFillColor(224, 236, 251);
+        doc.setDrawColor(112, 151, 202);
+        doc.roundedRect(nx, nodeY, nodeW, 10, 1.8, 1.8, "FD");
+        doc.setTextColor(27, 53, 87);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.6);
+        const label = node.length > 16 ? `${node.slice(0, 8)}...${node.slice(-5)}` : node;
+        doc.text(label, nx + 2, nodeY + 6.2);
+        if (i < nodes.length - 1) {
+          const ax = nx + nodeW;
+          const ay = nodeY + 5;
+          doc.setDrawColor(90, 120, 160);
+          doc.line(ax + 1, ay, ax + gap - 2, ay);
+          doc.line(ax + gap - 3.4, ay - 1.4, ax + gap - 2, ay);
+          doc.line(ax + gap - 3.4, ay + 1.4, ax + gap - 2, ay);
+        }
+      });
+
+      doc.addPage();
+      y = margin;
+      addSectionTitle("6. AI Investigation Insight");
+      addWrapped(report.ai_investigation_insight);
+      addSectionTitle("7. Recommended Action");
+      for (const action of report.recommended_actions) addWrapped(`- ${action}`, 10.5, 4.9, 2);
+      addSectionTitle("8. Disclaimer");
+      addWrapped(report.disclaimer, 10.2);
+
+      const totalPages = doc.getNumberOfPages();
+      for (let p = 1; p <= totalPages; p++) {
+        doc.setPage(p);
+        doc.setDrawColor(219, 228, 239);
+        doc.line(margin, pageHeight - 8, pageWidth - margin, pageHeight - 8);
+        doc.setTextColor(95, 116, 138);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.4);
+        doc.text(`BlockBuster Cyber Forensics Report | Page ${p} of ${totalPages}`, margin, pageHeight - 4.6);
+      }
+
+      const blob = doc.output("blob");
+      return URL.createObjectURL(blob);
+    }
+
     const doc = new jsPDF("p", "mm", "a4");
     const margin = 12;
     const width = doc.internal.pageSize.getWidth() - margin * 2;
@@ -223,29 +476,31 @@ export function ReviewPage() {
       setPdfUrl(generatedPdfUrl);
       updateStep(5, "completed", "PDF generated and submitted inside this page");
 
-      updateStep(6, "running");
-      await sleep(900);
-      const decision = result.risk_score >= 70 ? "Escalate immediately" : result.risk_score >= 40 ? "Review and monitor" : "Keep under observation";
-      setAuthorityDecision(decision);
-      updateStep(6, "completed", decision);
+      const anomalyDetected = Boolean(ai?.models.transaction_anomaly_detector?.is_anomaly);
+      const behaviorShift = Boolean(ai?.models.behavior_shift_detector?.behavior_shift_detected);
+      const priority = ai?.models.alert_prioritizer?.priority_score ?? 0;
 
-      updateStep(7, "running");
-      const shouldBlacklist = result.risk_score >= 40;
-      if (shouldBlacklist) {
-        const current = JSON.parse(localStorage.getItem(BLACKLIST_KEY) ?? "[]") as string[];
-        const merged = [...new Set([...current, result.wallet_address.toLowerCase()])];
-        localStorage.setItem(BLACKLIST_KEY, JSON.stringify(merged));
-        setBlacklisted(true);
-        updateStep(7, "completed", "Wallet added to local blacklist registry");
+      let recommendation: ApprovalAction;
+      if (result.risk_score >= 75 || suspiciousCount >= 6 || anomalyDetected || behaviorShift) {
+        recommendation = "FREEZE";
+      } else if (result.risk_score >= 40 || suspiciousCount > 0 || priority >= 55) {
+        recommendation = "HOLD";
       } else {
-        setBlacklisted(false);
-        updateStep(7, "completed", "Blacklist skipped (below threshold)");
+        recommendation = "RELEASE";
       }
 
-      updateStep(8, "running");
-      const restriction = result.risk_score >= 70 ? "Restriction simulated: exchange services blocked" : result.risk_score >= 40 ? "Restriction simulated: exchange operations under review" : "No exchange restriction applied";
-      setRestrictionState(restriction);
-      updateStep(8, "completed", restriction);
+      const xAi = [
+        `X-AI demo rationale: risk score ${result.risk_score.toFixed(1)} with ${suspiciousCount} suspicious transaction(s).`,
+        `Behavior shift: ${behaviorShift ? "detected" : "not detected"}. Anomaly detector: ${anomalyDetected ? "triggered" : "normal"}.`,
+        `Alert priority score: ${priority.toFixed(1)}. Recommended authority action: ${recommendation}.`,
+      ].join(" ");
+
+      setRecommendedAction(recommendation);
+      setXAiExplanation(xAi);
+      updateStep(6, "running", `Awaiting authority action (${recommendation} recommended)`);
+      updateStep(7, "pending");
+      updateStep(8, "pending");
+      setShowApprovalPopup(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Workflow execution failed";
       setWorkflowError(message);
@@ -254,6 +509,49 @@ export function ReviewPage() {
     } finally {
       setRunning(false);
     }
+  };
+
+  const applyAuthorityAction = (action: ApprovalAction) => {
+    if (!analysis) return;
+
+    setSelectedAction(action);
+    setShowApprovalPopup(false);
+    const decidedAt = new Date().toISOString();
+    setApprovalCompletedAt(decidedAt);
+
+    updateStep(6, "completed", `Authority selected ${action} (${new Date(decidedAt).toLocaleTimeString()})`);
+
+    const current = JSON.parse(localStorage.getItem(BLACKLIST_KEY) ?? "[]") as string[];
+    const normalized = analysis.wallet_address.toLowerCase();
+
+    if (action === "FREEZE") {
+      const merged = [...new Set([...current, normalized])];
+      localStorage.setItem(BLACKLIST_KEY, JSON.stringify(merged));
+      setBlacklisted(true);
+      setAuthorityDecision("Authority decision: FREEZE wallet immediately");
+      updateStep(7, "completed", "Wallet added to blacklist registry");
+      setRestrictionState("Exchange restriction simulated: all transfer and withdrawal operations frozen");
+      updateStep(8, "completed", "Exchange services frozen for this wallet");
+      return;
+    }
+
+    if (action === "HOLD") {
+      setBlacklisted(false);
+      setAuthorityDecision("Authority decision: HOLD wallet for manual investigation");
+      updateStep(7, "completed", "Blacklist deferred while wallet is on hold");
+      setRestrictionState("Exchange restriction simulated: outgoing transfers on hold pending review");
+      updateStep(8, "completed", "Exchange hold applied (partial restriction)");
+      return;
+    }
+
+    // RELEASE
+    const filtered = current.filter((entry) => entry !== normalized);
+    localStorage.setItem(BLACKLIST_KEY, JSON.stringify(filtered));
+    setBlacklisted(false);
+    setAuthorityDecision("Authority decision: RELEASE wallet activity");
+    updateStep(7, "completed", "Wallet not added to blacklist");
+    setRestrictionState("No exchange restriction applied");
+    updateStep(8, "completed", "Wallet released for normal exchange access");
   };
 
   return (
@@ -434,10 +732,23 @@ export function ReviewPage() {
                       Priority {aiFeatures.models.alert_prioritizer.priority_score.toFixed(1)}
                     </span>
                   )}
+                  {selectedAction && (
+                    <span style={{ borderRadius: 999, padding: "6px 9px", fontSize: 10, border: "1px solid #214061", color: selectedAction === "FREEZE" ? "#ff9cb0" : selectedAction === "HOLD" ? "#ffd486" : "#8dd5a7" }}>
+                      Decision: {selectedAction}
+                    </span>
+                  )}
                 </div>
               </>
             )}
           </div>
+
+          {xAiExplanation && (
+            <div style={{ background: "linear-gradient(145deg, #081426 0%, #071225 100%)", border: "1px solid #1a3050", borderRadius: 12, padding: 14 }}>
+              <div style={{ color: "#d9ecff", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>X-AI Explanation (Demo)</div>
+              <div style={{ color: "#a8c9e8", fontSize: 12, lineHeight: 1.55 }}>{xAiExplanation}</div>
+              {approvalCompletedAt && <div style={{ color: "#7ea7ca", fontSize: 10, marginTop: 8 }}>Decision timestamp: {new Date(approvalCompletedAt).toLocaleString()}</div>}
+            </div>
+          )}
 
           <div style={{ background: "linear-gradient(145deg, #081426 0%, #071225 100%)", border: "1px solid #1a3050", borderRadius: 12, padding: 14, minHeight: 240 }}>
             <div style={{ color: "#d9ecff", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Transaction Volume Visual</div>
@@ -490,6 +801,76 @@ export function ReviewPage() {
           </div>
         </div>
       </div>
+
+      {showApprovalPopup && analysis && recommendedAction && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(3,8,18,0.72)",
+            display: "grid",
+            placeItems: "center",
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div style={{ width: "100%", maxWidth: 720, borderRadius: 14, border: "1px solid #2a4f74", background: "linear-gradient(160deg, #09182d 0%, #0b1e33 100%)", padding: 18 }}>
+            <div style={{ color: "#e6f3ff", fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Authority Approval Required</div>
+            <div style={{ color: "#83aacd", fontSize: 12, marginBottom: 10 }}>
+              PDF has been submitted in-app. Select an authority action for this wallet based on score and behavior analysis.
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
+              <div style={{ background: "#061223", border: "1px solid #224161", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7fa8cb", fontSize: 10 }}>Wallet</div>
+                <div style={{ color: "#d8ebff", fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>{analysis.wallet_address}</div>
+              </div>
+              <div style={{ background: "#061223", border: "1px solid #224161", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7fa8cb", fontSize: 10 }}>Risk / Suspicious</div>
+                <div style={{ color: getRiskColor(analysis.risk_score), fontSize: 12, fontWeight: 700 }}>
+                  {analysis.risk_score.toFixed(1)} ({getRiskLabel(analysis.risk_score)}) · {analysis.suspicious_transactions.length} flagged tx
+                </div>
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid #224161", background: "#061223", borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
+              <div style={{ color: "#d8ebff", fontSize: 12, fontWeight: 700, marginBottom: 6 }}>X-AI demo recommendation: {recommendedAction}</div>
+              <div style={{ color: "#9ec0df", fontSize: 11, lineHeight: 1.5 }}>{xAiExplanation}</div>
+            </div>
+
+            {pdfUrl && (
+              <div style={{ border: "1px solid #224161", background: "#061223", borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
+                <div style={{ color: "#d8ebff", fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Attached PDF (Wallet Analyzer format)</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <a href={pdfUrl} download="wallet_report_review.pdf" style={{ color: "#9fd0ff", fontSize: 11 }}>Download Attachment</a>
+                  <span style={{ color: "#7ea7ca", fontSize: 10 }}>This is the same investigation layout used in Wallet Analyzer.</span>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button
+                onClick={() => applyAuthorityAction("RELEASE")}
+                style={{ border: "1px solid #2f7f54", background: "rgba(30,112,72,0.16)", color: "#8fd9ac", borderRadius: 8, padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+              >
+                RELEASE
+              </button>
+              <button
+                onClick={() => applyAuthorityAction("HOLD")}
+                style={{ border: "1px solid #8f6a2b", background: "rgba(143,106,43,0.18)", color: "#ffd486", borderRadius: 8, padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+              >
+                HOLD
+              </button>
+              <button
+                onClick={() => applyAuthorityAction("FREEZE")}
+                style={{ border: "1px solid #8f3145", background: "rgba(143,49,69,0.2)", color: "#ff9cb0", borderRadius: 8, padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+              >
+                FREEZE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @media (max-width: 1150px) {
