@@ -6,6 +6,7 @@ suspicious-pattern detection results plus a risk score.
 
 import pandas as pd
 from datetime import datetime, timedelta
+from typing import Any
 
 # -----------------------------------------------------------------
 # Known high-risk address sets (Ethereum mainnet examples)
@@ -32,7 +33,7 @@ WEI_TO_ETH = 1e-18
 # Core analysis function
 # -----------------------------------------------------------------
 
-def analyze_transactions(raw_transactions: list[dict]) -> dict:
+def analyze_transactions(raw_transactions: list[dict], wallet_address: str | None = None) -> dict:
     """
     Analyse a list of Etherscan transaction dicts.
 
@@ -49,18 +50,30 @@ def analyze_transactions(raw_transactions: list[dict]) -> dict:
             "suspicious_transactions": [],
             "risk_score": 0,
             "transaction_flow": [],
+            "explainability": {
+                "decision": "low_risk",
+                "summary": "No transactions found for this wallet",
+                "reasons": ["No on-chain activity available for analysis"],
+                "signals": {
+                    "high_risk_counterparties": 0,
+                    "suspicious_transaction_ratio": 0.0,
+                    "large_transactions": 0,
+                },
+            },
         }
 
     df = _build_dataframe(raw_transactions)
     suspicious = _detect_suspicious(df)
     risk_score = _calculate_risk_score(df, suspicious)
     transaction_flow = _build_flow(df)
+    explainability = _build_explainability(df, suspicious, risk_score, wallet_address)
 
     return {
         "total_transactions": len(df),
         "suspicious_transactions": suspicious,
         "risk_score": risk_score,
         "transaction_flow": transaction_flow,
+        "explainability": explainability,
     }
 
 
@@ -156,7 +169,14 @@ def _calculate_risk_score(df: pd.DataFrame, suspicious: list[dict]) -> int:
 
     # Proportion of suspicious transactions
     sus_ratio = len(suspicious) / total
-    score += sus_ratio * 40  # up to 40 points
+    score += sus_ratio * 55  # up to 55 points
+    if sus_ratio >= 0.5:
+        score += 15
+    elif sus_ratio >= 0.3:
+        score += 8
+
+    if len(suspicious) >= 5:
+        score += 10
 
     # Mixer / dark-web involvement → immediate high score
     mixer_addresses = KNOWN_MIXERS | KNOWN_DARKWEB
@@ -166,10 +186,23 @@ def _calculate_risk_score(df: pd.DataFrame, suspicious: list[dict]) -> int:
 
     # Large volume
     total_eth = df["value_eth"].sum()
-    if total_eth > 100:
-        score += 15
+    if total_eth > 1000:
+        score += 20
+    elif total_eth > 100:
+        score += 12
     elif total_eth > 10:
-        score += 8
+        score += 6
+
+    # Single-transfer outlier detection (important for scam drain patterns)
+    max_tx_eth = float(df["value_eth"].max()) if total else 0.0
+    if max_tx_eth > 10_000:
+        score += 25
+    elif max_tx_eth > 1_000:
+        score += 18
+    elif max_tx_eth > 100:
+        score += 12
+    elif max_tx_eth > 10:
+        score += 6
 
     # High tx count in short time
     if total > 0:
@@ -178,6 +211,22 @@ def _calculate_risk_score(df: pd.DataFrame, suspicious: list[dict]) -> int:
             rate = total / (timespan / 3600)  # txs per hour
             if rate > 60:
                 score += 10
+            elif rate > 20:
+                score += 5
+
+    # Boost when suspicious reasons indicate structural laundering patterns.
+    all_reasons = " ".join(
+        reason.lower()
+        for tx in suspicious
+        for reason in tx.get("reasons", [])
+        if isinstance(reason, str)
+    )
+    if "circular transaction pattern" in all_reasons:
+        score += 8
+    if "rapid transaction burst" in all_reasons:
+        score += 8
+    if "failed transaction with non-zero value" in all_reasons:
+        score += 5
 
     return min(100, round(score))
 
@@ -195,3 +244,58 @@ def _build_flow(df: pd.DataFrame) -> list[dict]:
         }
         for _, row in df.iterrows()
     ]
+
+
+def _build_explainability(
+    df: pd.DataFrame,
+    suspicious: list[dict[str, Any]],
+    risk_score: int,
+    wallet_address: str | None,
+) -> dict[str, Any]:
+    total = len(df)
+    suspicious_ratio = (len(suspicious) / total) if total else 0.0
+
+    wallet = (wallet_address or "").strip().lower()
+    mixer_addresses = KNOWN_MIXERS | KNOWN_DARKWEB
+    high_risk_counterparties = set()
+    for _, row in df.iterrows():
+        frm = str(row.get("from", "")).lower()
+        to = str(row.get("to", "")).lower()
+        if frm in mixer_addresses and frm != wallet:
+            high_risk_counterparties.add(frm)
+        if to in mixer_addresses and to != wallet:
+            high_risk_counterparties.add(to)
+
+    reasons: list[str] = []
+    if high_risk_counterparties:
+        reasons.append(f"Interacts with {len(high_risk_counterparties)} known high-risk wallets")
+
+    if suspicious_ratio >= 0.4:
+        reasons.append(f"High suspicious transaction ratio ({suspicious_ratio * 100:.1f}%)")
+
+    if total >= 10:
+        hours = max(1.0, (df["datetime"].max() - df["datetime"].min()).total_seconds() / 3600)
+        tx_per_hour = total / hours
+        if tx_per_hour > 30:
+            reasons.append(f"Abnormal transaction frequency ({tx_per_hour:.1f} tx/hour)")
+
+    large_tx_count = int((df["value_eth"] > 10).sum())
+    if large_tx_count > 0:
+        reasons.append(f"Contains {large_tx_count} large-value transfers (>10 ETH)")
+
+    if not reasons:
+        reasons.append("No dominant high-risk pattern detected; monitoring suggested")
+
+    decision = "flagged" if risk_score >= 70 else "monitor" if risk_score >= 40 else "low_risk"
+    summary = f"Wallet {decision.replace('_', ' ')} with risk score {risk_score}/100"
+
+    return {
+        "decision": decision,
+        "summary": summary,
+        "reasons": reasons,
+        "signals": {
+            "high_risk_counterparties": len(high_risk_counterparties),
+            "suspicious_transaction_ratio": round(suspicious_ratio, 4),
+            "large_transactions": large_tx_count,
+        },
+    }

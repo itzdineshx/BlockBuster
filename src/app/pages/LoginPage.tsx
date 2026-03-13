@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Shield, Eye, EyeOff, Lock, Mail, Zap } from "lucide-react";
+import { setCredentialSession, setWalletSession } from "../utils/walletSession";
+
+type EthereumProvider = {
+  request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>;
+};
+
+declare global {
+  interface Window {
+    ethereum?: EthereumProvider;
+  }
+}
 
 interface Particle {
   x: number;
@@ -158,16 +169,35 @@ export function LoginPage() {
     setLoading(true);
     setTimeout(() => {
       setLoading(false);
+      setCredentialSession(email);
       navigate("/app");
     }, 1400);
   };
 
-  const handleMetaMask = () => {
+  const handleMetaMask = async () => {
+    if (!window.ethereum) {
+      setError("MetaMask is not detected. Install MetaMask and try again.");
+      return;
+    }
+
+    setError("");
     setWalletConnecting(true);
-    setTimeout(() => {
+
+    try {
+      const accounts = (await window.ethereum.request({ method: "eth_requestAccounts" })) as string[];
+      const walletAddress = accounts?.[0];
+      if (!walletAddress) {
+        setError("Unable to fetch wallet address from MetaMask.");
+        return;
+      }
+
+      setWalletSession(walletAddress);
+      navigate("/app/wallet");
+    } catch {
+      setError("MetaMask connection request was rejected or failed.");
+    } finally {
       setWalletConnecting(false);
-      navigate("/app");
-    }, 1800);
+    }
   };
 
   return (

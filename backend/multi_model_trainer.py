@@ -399,6 +399,58 @@ def _load_bundle(model_dir: Path, key: str) -> dict[str, Any]:
     return bundle
 
 
+def _build_model_explainability(models: dict[str, Any]) -> dict[str, Any]:
+    reasons: list[str] = []
+
+    risk = models.get("wallet_risk_classifier", {})
+    risk_score = float(risk.get("risk_score", 0.0) or 0.0)
+    if risk_score >= 70:
+        reasons.append(f"Wallet risk classifier is high ({risk_score:.1f}/100)")
+    elif risk_score >= 45:
+        reasons.append(f"Wallet risk classifier indicates moderate risk ({risk_score:.1f}/100)")
+
+    anomaly = models.get("transaction_anomaly_detector", {})
+    if bool(anomaly.get("is_anomaly")):
+        reasons.append("Transaction pattern is anomalous compared to baseline behavior")
+
+    shift = models.get("behavior_shift_detector", {})
+    if bool(shift.get("behavior_shift_detected")):
+        reasons.append("Behavior shift detector found an abrupt change in activity profile")
+
+    contagion = models.get("counterparty_contagion_regressor", {})
+    contagion_score = float(contagion.get("contagion_score", 0.0) or 0.0)
+    if contagion_score >= 60:
+        reasons.append(f"Counterparty contagion risk is elevated ({contagion_score:.1f}/100)")
+
+    priority = models.get("alert_prioritizer", {})
+    priority_score = float(priority.get("priority_score", 0.0) or 0.0)
+    if priority_score >= 70:
+        reasons.append(f"Alert prioritizer recommends urgent handling ({priority_score:.1f}/100)")
+
+    entity_type = str(models.get("entity_type_classifier", {}).get("entity_type", "") or "")
+    if entity_type in {"mixer_like", "contract_heavy"}:
+        reasons.append(f"Entity profile classified as {entity_type.replace('_', ' ')}")
+
+    if not reasons:
+        reasons.append("AI models show low-risk baseline behavior")
+
+    decision = "flagged" if any(
+        [
+            risk_score >= 70,
+            bool(anomaly.get("is_anomaly")),
+            bool(shift.get("behavior_shift_detected")),
+            contagion_score >= 60,
+            priority_score >= 70,
+        ]
+    ) else "monitor" if risk_score >= 45 or priority_score >= 45 else "low_risk"
+
+    return {
+        "decision": decision,
+        "summary": f"AI decision: {decision.replace('_', ' ')}",
+        "reasons": reasons,
+    }
+
+
 def predict_all_models_for_wallet(
     wallet_address: str,
     dataset_path: str | None = None,
@@ -526,6 +578,8 @@ def predict_all_models_for_wallets(
         out["models"]["alert_prioritizer"] = {
             "priority_score": round(max(0.0, min(100.0, alert_score)), 4),
         }
+
+        out["explainability"] = _build_model_explainability(out["models"])
 
         outputs.append(out)
 
