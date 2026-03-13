@@ -3,6 +3,7 @@ import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
 import {
   LayoutDashboard,
   GitBranch,
+  ClipboardCheck,
   AlertTriangle,
   Search,
   Bell,
@@ -24,6 +25,8 @@ const navItems = [
   { path: "/app/suspicious", label: "Suspicious Activity", icon: AlertTriangle, end: false },
   { path: "/app/wallet", label: "Wallet Analyzer", icon: Search, end: false },
   { path: "/app/alerts", label: "Alert Monitor", icon: Bell, end: false },
+    { path: "/app/review", label: "Review Workflow", icon: ClipboardCheck, end: false },
+
 ];
 
 export function Layout() {
