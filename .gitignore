@@ -25,3 +25,9 @@ dist-ssr
 
 # Python artifacts
 backend/__pycache__/
+
+# Environment files
+.env
+.env.*
+backend/.env
+backend/.env.*
