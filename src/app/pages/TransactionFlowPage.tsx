@@ -272,7 +272,6 @@ export function TransactionFlowPage() {
             viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
             style={{ width: "100%", height: "100%", display: "block", cursor: isPanning ? "grabbing" : "grab", touchAction: "none" }}
             onWheel={(event) => {
-              event.preventDefault();
               const delta = event.deltaY < 0 ? 0.2 : -0.2;
               zoomBy(delta);
             }}

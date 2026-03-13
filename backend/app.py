@@ -5,6 +5,7 @@ CryptoFlow Analyzer — Flask API
 import os
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -118,20 +119,38 @@ def analytics():
                 if str(node.get("address", "")).strip()
             ][:ai_limit]
 
-            batch_results = predict_all_models_for_wallets(addresses)
-            insights = {item["wallet_address"]: item for item in batch_results}
+            dataset_path = os.environ.get("TRANSACTION_DATASET_PATH") or "../data/transaction_dataset.csv"
+            model_dir = os.environ.get("WALLET_ML_MODEL_DIR") or "./models"
+            dataset_path = str((Path(BACKEND_DIR) / dataset_path).resolve()) if not Path(dataset_path).is_absolute() else dataset_path
+            model_dir = str((Path(BACKEND_DIR) / model_dir).resolve()) if not Path(model_dir).is_absolute() else model_dir
 
-            missing = [addr for addr in addresses if addr not in insights]
-            for addr in missing:
-                model_errors.append({"address": addr, "error": "Wallet not found in model dataset"})
+            try:
+                batch_results = predict_all_models_for_wallets(
+                    addresses,
+                    dataset_path=dataset_path,
+                    artifact_dir=model_dir,
+                )
+                insights = {item["wallet_address"]: item for item in batch_results}
 
-            payload["aiInsights"] = insights
-            payload["aiIntegration"] = {
-                "enabled": True,
-                "scored_wallets": len(insights),
-                "scored_limit": ai_limit,
-                "errors": model_errors,
-            }
+                missing = [addr for addr in addresses if addr not in insights]
+                for addr in missing:
+                    model_errors.append({"address": addr, "error": "Wallet not found in model dataset"})
+
+                payload["aiInsights"] = insights
+                payload["aiIntegration"] = {
+                    "enabled": True,
+                    "scored_wallets": len(insights),
+                    "scored_limit": ai_limit,
+                    "errors": model_errors,
+                }
+            except Exception as exc:
+                payload["aiInsights"] = {}
+                payload["aiIntegration"] = {
+                    "enabled": False,
+                    "scored_wallets": 0,
+                    "scored_limit": ai_limit,
+                    "errors": [{"address": "*", "error": f"AI enrichment unavailable: {exc}"}],
+                }
         return jsonify(payload), 200
     except FileNotFoundError as exc:
         return jsonify({"error": str(exc)}), 500

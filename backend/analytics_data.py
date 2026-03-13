@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 _ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+BACKEND_DIR = Path(__file__).resolve().parent
 
 
 def _require_env(name: str) -> str:
@@ -18,6 +19,20 @@ def _require_env(name: str) -> str:
     if value is None or not str(value).strip():
         raise RuntimeError(f"Missing required environment variable: {name}")
     return str(value).strip()
+
+
+def _env_or_default(name: str, default: str) -> str:
+    value = os.environ.get(name)
+    if value is None or not str(value).strip():
+        return default
+    return str(value).strip()
+
+
+def _resolve_dataset_path(raw_path: str) -> Path:
+    dataset_path = Path(raw_path).expanduser()
+    if not dataset_path.is_absolute():
+        dataset_path = (BACKEND_DIR / dataset_path).resolve()
+    return dataset_path
 
 
 def _clamp(value: float, low: int = 0, high: int = 100) -> int:
@@ -60,9 +75,9 @@ def _wallet_type(risk: int, tx_count: int) -> str:
 
 def build_analytics_dataset() -> dict:
     """Build a complete analytics payload from a wallet-level CSV dataset."""
-    dataset_path = Path(_require_env("TRANSACTION_DATASET_PATH"))
-    sample_size = max(20, int(_require_env("ANALYTICS_SAMPLE_SIZE")))
-    eth_usd_price = max(500.0, _as_float(_require_env("ETH_USD_PRICE"), 3500.0))
+    dataset_path = _resolve_dataset_path(_env_or_default("TRANSACTION_DATASET_PATH", "../data/transaction_dataset.csv"))
+    sample_size = max(20, int(_env_or_default("ANALYTICS_SAMPLE_SIZE", "140")))
+    eth_usd_price = max(500.0, _as_float(_env_or_default("ETH_USD_PRICE", "3500"), 3500.0))
 
     if not dataset_path.exists():
         raise FileNotFoundError(
