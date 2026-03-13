@@ -343,8 +343,27 @@ def ml_predict_all():
             artifact_dir=body.get("artifact_dir"),
         )
         return jsonify(result), 200
-    except (FileNotFoundError, ValueError) as exc:
+    except FileNotFoundError as exc:
         return jsonify({"error": str(exc)}), 400
+    except ValueError as exc:
+        # If a valid wallet is missing from the ML dataset, don't hard-fail the request.
+        # The frontend can still render analysis with heuristic signals and partial AI data.
+        message = str(exc)
+        if "not found in dataset" in message.lower():
+            return jsonify({
+                "wallet_address": wallet_address.lower(),
+                "models": {},
+                "explainability": {
+                    "decision": "monitor",
+                    "summary": "AI features unavailable for this wallet in the current training dataset.",
+                    "reasons": [
+                        "Wallet address is not present in the ML training dataset.",
+                        "Rule-based analysis is still available from the wallet analyzer.",
+                    ],
+                },
+                "warning": message,
+            }), 200
+        return jsonify({"error": message}), 400
     except Exception as exc:
         return jsonify({"error": f"Predict-all failed: {exc}"}), 500
 

@@ -1223,8 +1223,15 @@ export function WalletAnalyzerPage() {
               padding: 24,
             }}
           >
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
-              <div style={{ flex: 1, minWidth: 260 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+                gap: 20,
+                alignItems: "start",
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   <div style={{ color: "#e2f0ff", fontSize: 17, fontWeight: 700 }}>Analyzed Wallet</div>
                   <button
@@ -1386,11 +1393,36 @@ export function WalletAnalyzerPage() {
                 </div>
               </div>
 
-              <div style={{ width: 420, maxWidth: "100%" }}>
-                <div style={{ color: "#7a9cc0", fontSize: 11, letterSpacing: "0.05em", marginBottom: 8 }}>
-                  CONNECTION GRAPH
-                </div>
-                <div style={{ background: "#070d1a", border: "1px solid #1a3050", borderRadius: 10, height: 320, overflow: "hidden" }}>
+              <div style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    background: "linear-gradient(145deg, #081426 0%, #071225 100%)",
+                    border: "1px solid #1a3050",
+                    borderRadius: 12,
+                    padding: 12,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                    <div style={{ color: "#d6ecff", fontSize: 12, fontWeight: 700, letterSpacing: "0.03em" }}>TRANSACTION FLOW GRAPH</div>
+                    <div style={{ color: "#6f99bc", fontSize: 10 }}>Drag to pan • Scroll to zoom</div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6, marginBottom: 10 }}>
+                    <div style={{ background: "#060f1f", border: "1px solid #183355", borderRadius: 8, padding: "7px 8px" }}>
+                      <div style={{ color: "#6f99bc", fontSize: 9 }}>Nodes</div>
+                      <div style={{ color: "#d6ecff", fontSize: 12, fontWeight: 700 }}>{Math.min(10, counterparties.length) + 1}</div>
+                    </div>
+                    <div style={{ background: "#060f1f", border: "1px solid #183355", borderRadius: 8, padding: "7px 8px" }}>
+                      <div style={{ color: "#6f99bc", fontSize: 9 }}>Edges</div>
+                      <div style={{ color: "#d6ecff", fontSize: 12, fontWeight: 700 }}>{Math.min(10, counterparties.length)}</div>
+                    </div>
+                    <div style={{ background: "#060f1f", border: "1px solid #183355", borderRadius: 8, padding: "7px 8px" }}>
+                      <div style={{ color: "#6f99bc", fontSize: 9 }}>Suspicious Links</div>
+                      <div style={{ color: "#ff9db0", fontSize: 12, fontWeight: 700 }}>{suspiciousPairs.size}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ background: "#070d1a", border: "1px solid #1a3050", borderRadius: 10, height: 340, overflow: "hidden" }}>
                   <MiniFlowGraph
                     walletAddress={analysis.wallet_address.toLowerCase()}
                     counterparties={counterparties}
@@ -1399,6 +1431,7 @@ export function WalletAnalyzerPage() {
                 </div>
               </div>
             </div>
+          </div>
           </div>
 
           <div
