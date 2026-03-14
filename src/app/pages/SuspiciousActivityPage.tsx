@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   ChevronUp,
@@ -35,7 +35,7 @@ interface SuspiciousRow {
 }
 
 export function SuspiciousActivityPage() {
-  const { data } = useAnalyticsDataWithAi();
+  const { data, loading } = useAnalyticsDataWithAi({ pollMs: 15000 });
   const { walletNodes, transactions } = data;
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("risk");
@@ -73,6 +73,85 @@ export function SuspiciousActivityPage() {
       else { va = new Date(a.tx.timestamp).getTime(); vb = new Date(b.tx.timestamp).getTime(); }
       return sortDir === "desc" ? vb - va : va - vb;
     });
+
+  const suspiciousCategoryStats = useMemo(() => {
+    const aiInsights = data.aiInsights ?? {};
+    const counters = {
+      mixer: 0,
+      darkWeb: 0,
+      ransomware: 0,
+      circular: 0,
+      rapid: 0,
+    };
+
+    const neighborMap = new Map<string, string[]>();
+    suspiciousTxs.forEach((row) => {
+      const from = row.fromWallet?.id;
+      const to = row.toWallet?.id;
+      if (from && to) {
+        const fromList = neighborMap.get(from) ?? [];
+        fromList.push(to);
+        neighborMap.set(from, fromList);
+
+        const toList = neighborMap.get(to) ?? [];
+        toList.push(from);
+        neighborMap.set(to, toList);
+      }
+
+      const reason = (row.tx.reason ?? "").toLowerCase();
+      const fromType = row.fromWallet?.type ?? "";
+      const toType = row.toWallet?.type ?? "";
+
+      const fromAi = row.fromWallet?.address ? aiInsights[row.fromWallet.address.toLowerCase()] : undefined;
+      const toAi = row.toWallet?.address ? aiInsights[row.toWallet.address.toLowerCase()] : undefined;
+
+      const anomalyLinked = Boolean(
+        fromAi?.models.transaction_anomaly_detector?.is_anomaly ||
+        toAi?.models.transaction_anomaly_detector?.is_anomaly
+      );
+
+      if (
+        reason.includes("mixer") ||
+        fromType === "mixer" ||
+        toType === "mixer" ||
+        reason.includes("chain hop")
+      ) {
+        counters.mixer += 1;
+      }
+
+      if (
+        reason.includes("dark web") ||
+        fromType === "darkweb" ||
+        toType === "darkweb"
+      ) {
+        counters.darkWeb += 1;
+      }
+
+      if (
+        reason.includes("ransomware") ||
+        (anomalyLinked && row.tx.usdValue >= 15000)
+      ) {
+        counters.ransomware += 1;
+      }
+
+      if (
+        reason.includes("circular") ||
+        (fromType && toType && fromType === toType && row.maxRisk >= 85)
+      ) {
+        counters.circular += 1;
+      }
+
+      if (
+        reason.includes("rapid") ||
+        row.tx.reason === "High-risk counterparty interaction" ||
+        anomalyLinked
+      ) {
+        counters.rapid += 1;
+      }
+    });
+
+    return counters;
+  }, [data.aiInsights, suspiciousTxs]);
 
   const aiInsights = data.aiInsights ?? {};
   const suspiciousWalletAddresses = new Set<string>();
@@ -145,7 +224,7 @@ export function SuspiciousActivityPage() {
             }}
           >
             <AlertTriangle size={14} />
-            {suspiciousTxs.length} suspicious transactions
+            {loading ? "Refreshing live data..." : `${suspiciousTxs.length} suspicious transactions`}
           </div>
         </div>
       </div>
@@ -155,27 +234,27 @@ export function SuspiciousActivityPage() {
         {[
           {
             label: "Mixer Transactions",
-            count: transactions.filter((t) => t.suspicious && t.reason?.includes("ixer")).length,
+            count: suspiciousCategoryStats.mixer,
             color: "#a855f7",
           },
           {
             label: "Dark Web Links",
-            count: transactions.filter((t) => t.suspicious && t.reason?.includes("dark web")).length,
+            count: suspiciousCategoryStats.darkWeb,
             color: "#ff2b4a",
           },
           {
             label: "Ransomware",
-            count: transactions.filter((t) => t.suspicious && t.reason?.includes("ansomware")).length,
+            count: suspiciousCategoryStats.ransomware,
             color: "#ff7700",
           },
           {
             label: "Circular Patterns",
-            count: transactions.filter((t) => t.suspicious && t.reason?.includes("ircular")).length,
+            count: suspiciousCategoryStats.circular,
             color: "#f5c518",
           },
           {
             label: "Rapid Transfers",
-            count: transactions.filter((t) => t.suspicious && t.reason?.includes("apid")).length,
+            count: suspiciousCategoryStats.rapid,
             color: "#00aaff",
           },
         ].map((item) => (

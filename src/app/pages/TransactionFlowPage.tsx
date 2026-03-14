@@ -32,6 +32,11 @@ export function TransactionFlowPage() {
   const { data } = useAnalyticsDataWithAi();
   const { walletNodes, transactions } = data;
 
+  const [viewportWidth, setViewportWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return 1440;
+    return window.innerWidth;
+  });
+
   const [showSuspiciousOnly, setShowSuspiciousOnly] = useState(false);
   const [animating, setAnimating] = useState(true);
 
@@ -48,6 +53,25 @@ export function TransactionFlowPage() {
   const VIEW_HEIGHT = 800;
   const CENTER_X = VIEW_WIDTH / 2;
   const CENTER_Y = VIEW_HEIGHT / 2;
+
+  const isTablet = viewportWidth <= 1200;
+  const isMobile = viewportWidth <= 900;
+  const graphMinHeight = isMobile ? 440 : isTablet ? 520 : 620;
+  const panelWidth = isMobile ? "100%" : 340;
+  const controlSize = isMobile ? 38 : 32;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onResize = () => {
+      setViewportWidth(window.innerWidth);
+    };
+
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
 
   // Use deterministic layout
   const posMap = useMemo(() => {
@@ -99,6 +123,24 @@ export function TransactionFlowPage() {
       setPan((oldPan) => clampPan(oldPan.x, oldPan.y, nextZoom));
       return nextZoom;
     });
+  };
+
+  const focusNode = (node: WalletNode, preferredZoom = 1.45) => {
+    const pos = posMap.get(node.id);
+    if (!pos) return;
+
+    const nextZoom = Math.max(0.8, Math.min(2.4, preferredZoom));
+    const nextPan = clampPan(CENTER_X - pos.x, CENTER_Y - pos.y, nextZoom);
+    setZoom(nextZoom);
+    setPan(nextPan);
+  };
+
+  const selectNode = (node: WalletNode) => {
+    setSelectedNode(node);
+    // Auto-focus on compact layouts so users don't lose the selected context.
+    if (isMobile || zoom < 0.9) {
+      focusNode(node, isMobile ? 1.55 : 1.35);
+    }
   };
 
   const selectedTxs = useMemo(() => {
@@ -329,9 +371,9 @@ export function TransactionFlowPage() {
   }, [selectedAi, selectedContext, selectedNode, selectedSignals]);
 
   return (
-    <div style={{ padding: "28px 32px", fontFamily: "'Space Grotesk', sans-serif", background: "#050912", minHeight: "100%", display: "flex", flexDirection: "column" }}>
+    <div style={{ padding: isMobile ? "16px 14px" : "28px 32px", fontFamily: "'Space Grotesk', sans-serif", background: "#050912", minHeight: "100%", display: "flex", flexDirection: "column" }}>
       {/* Header */}
-      <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 12 : 0 }}>
         <div>
           <h1 style={{ color: "#e2f0ff", margin: 0, fontSize: 22, fontWeight: 700 }}>
             Transaction <span style={{ color: "#00ff9d" }}>Flow Graph</span>
@@ -340,11 +382,11 @@ export function TransactionFlowPage() {
             Interactive wallet-to-wallet network visualization
           </p>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, width: isMobile ? "100%" : undefined }}>
           <button
             onClick={() => setShowSuspiciousOnly(!showSuspiciousOnly)}
             style={{
-              padding: "8px 16px",
+              padding: isMobile ? "10px 12px" : "8px 16px",
               background: showSuspiciousOnly ? "rgba(255,43,74,0.15)" : "#0a1628",
               border: `1px solid ${showSuspiciousOnly ? "#ff2b4a" : "#1a3050"}`,
               borderRadius: 8,
@@ -354,6 +396,8 @@ export function TransactionFlowPage() {
               display: "flex",
               alignItems: "center",
               gap: 6,
+              justifyContent: "center",
+              flex: isMobile ? 1 : undefined,
               fontFamily: "'Space Grotesk', sans-serif",
             }}
           >
@@ -363,7 +407,7 @@ export function TransactionFlowPage() {
           <button
             onClick={() => setAnimating(!animating)}
             style={{
-              padding: "8px 16px",
+              padding: isMobile ? "10px 12px" : "8px 16px",
               background: "#0a1628",
               border: "1px solid #1a3050",
               borderRadius: 8,
@@ -373,6 +417,8 @@ export function TransactionFlowPage() {
               display: "flex",
               alignItems: "center",
               gap: 6,
+              justifyContent: "center",
+              flex: isMobile ? 1 : undefined,
               fontFamily: "'Space Grotesk', sans-serif",
             }}
           >
@@ -382,7 +428,7 @@ export function TransactionFlowPage() {
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 20, flex: 1, minHeight: 600 }}>
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 16, flex: 1, minHeight: isMobile ? undefined : 600 }}>
         {/* Interactive SVG graph area */}
         <div
           style={{
@@ -392,6 +438,7 @@ export function TransactionFlowPage() {
             border: "1px solid #1a3050",
             borderRadius: 12,
             overflow: "hidden",
+            minHeight: graphMinHeight,
           }}
         >
           {/* Legend */}
@@ -445,7 +492,7 @@ export function TransactionFlowPage() {
           </div>
 
           {/* Stats */}
-          <div style={{ position: "absolute", bottom: 16, left: 16, zIndex: 10, display: "flex", gap: 8, pointerEvents: "none" }}>
+          <div style={{ position: "absolute", bottom: 16, left: 16, zIndex: 10, display: "flex", gap: 8, pointerEvents: "none", flexWrap: "wrap", maxWidth: isMobile ? "80%" : undefined }}>
             {[
               { label: "Wallets", value: walletNodes.length, color: "#00aaff" },
               { label: "Transactions", value: transactions.length, color: "#00ff9d" },
@@ -471,16 +518,20 @@ export function TransactionFlowPage() {
           <div style={{ position: "absolute", top: 16, right: 16, zIndex: 10, display: "flex", gap: 6 }}>
              <button
                onClick={() => zoomBy(0.2)}
-               style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #1a3050", background: "rgba(5,9,18,0.85)", color: "#9bc6ea", cursor: "pointer", display: "grid", placeItems: "center" }}
+               style={{ width: controlSize, height: controlSize, borderRadius: 8, border: "1px solid #1a3050", background: "rgba(5,9,18,0.85)", color: "#9bc6ea", cursor: "pointer", display: "grid", placeItems: "center" }}
              ><Plus size={16} /></button>
              <button
                onClick={() => zoomBy(-0.2)}
-               style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #1a3050", background: "rgba(5,9,18,0.85)", color: "#9bc6ea", cursor: "pointer", display: "grid", placeItems: "center" }}
+               style={{ width: controlSize, height: controlSize, borderRadius: 8, border: "1px solid #1a3050", background: "rgba(5,9,18,0.85)", color: "#9bc6ea", cursor: "pointer", display: "grid", placeItems: "center" }}
              ><Minus size={16} /></button>
              <button
                onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
-               style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #1a3050", background: "rgba(5,9,18,0.85)", color: "#9bc6ea", cursor: "pointer", display: "grid", placeItems: "center" }}
+               style={{ width: controlSize, height: controlSize, borderRadius: 8, border: "1px solid #1a3050", background: "rgba(5,9,18,0.85)", color: "#9bc6ea", cursor: "pointer", display: "grid", placeItems: "center" }}
              ><RotateCcw size={14} /></button>
+          </div>
+
+          <div style={{ position: "absolute", bottom: 16, right: 16, zIndex: 10, background: "rgba(5,9,18,0.72)", border: "1px solid #1a3050", borderRadius: 8, padding: "6px 8px", color: "#7a9cc0", fontSize: 10, letterSpacing: "0.02em" }}>
+            Drag to pan • Wheel/buttons to zoom • Tap node to inspect
           </div>
 
           {/* SVG Canvas */}
@@ -488,12 +539,21 @@ export function TransactionFlowPage() {
             viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
             style={{ width: "100%", height: "100%", display: "block", cursor: isPanning ? "grabbing" : "grab", touchAction: "none" }}
             onWheel={(event) => {
+              event.preventDefault();
               const delta = event.deltaY < 0 ? 0.2 : -0.2;
               zoomBy(delta);
             }}
+            onDoubleClick={() => {
+              setZoom(1);
+              setPan({ x: 0, y: 0 });
+            }}
             onPointerDown={(event) => {
+              if ((event.target as HTMLElement).closest("[data-node='true']")) {
+                return;
+              }
               setIsPanning(true);
               dragRef.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
+              event.currentTarget.setPointerCapture(event.pointerId);
             }}
             onPointerMove={(event) => {
               if (!dragRef.current) return;
@@ -502,7 +562,13 @@ export function TransactionFlowPage() {
               const dy = (event.clientY - dragRef.current.y) * (VIEW_HEIGHT / rect.height);
               setPan(clampPan(dragRef.current.panX + dx, dragRef.current.panY + dy, zoom));
             }}
-            onPointerUp={() => { dragRef.current = null; setIsPanning(false); }}
+            onPointerUp={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+              dragRef.current = null;
+              setIsPanning(false);
+            }}
             onPointerLeave={() => { dragRef.current = null; setIsPanning(false); }}
           >
             <g transform={`translate(${CENTER_X + pan.x} ${CENTER_Y + pan.y}) scale(${zoom}) translate(${-CENTER_X} ${-CENTER_Y})`}>
@@ -565,9 +631,10 @@ export function TransactionFlowPage() {
                 return (
                   <g
                     key={node.id}
+                    data-node="true"
                     transform={`translate(${pos.x} ${pos.y})`}
                     style={{ cursor: "pointer", transition: "opacity 0.2s" }}
-                    onClick={() => setSelectedNode(node)}
+                    onClick={() => selectNode(node)}
                     onPointerEnter={() => setHoveredNodeId(node.id)}
                     onPointerLeave={() => setHoveredNodeId(null)}
                     opacity={isDimmed ? 0.2 : 1}
@@ -602,7 +669,7 @@ export function TransactionFlowPage() {
         </div>
 
         {/* Right Detail Panel */}
-        <div style={{ width: 340, display: "flex", flexDirection: "column", gap: 16, overflowY: "auto" }}>
+        <div style={{ width: panelWidth, maxWidth: "100%", display: "flex", flexDirection: "column", gap: 16, overflowY: "auto", maxHeight: isMobile ? 460 : undefined }}>
           {selectedNode ? (
             <>
               {/* Selected Node Details */}
@@ -885,7 +952,7 @@ export function TransactionFlowPage() {
                 {walletNodes.map((node) => (
                   <button
                     key={node.id}
-                    onClick={() => setSelectedNode(node)}
+                    onClick={() => selectNode(node)}
                     style={{
                       display: "flex",
                       alignItems: "center",

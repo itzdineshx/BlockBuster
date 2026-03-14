@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { fetchAnalyticsPayload, fetchAnalyticsPayloadWithAi, type AnalyticsPayload } from "../api/analyticsApi";
 
+interface AnalyticsHookOptions {
+  pollMs?: number;
+}
+
 const EMPTY_ANALYTICS: AnalyticsPayload = {
   walletNodes: [],
   transactions: [],
@@ -10,16 +14,20 @@ const EMPTY_ANALYTICS: AnalyticsPayload = {
   hourlyAlerts: [],
 };
 
-export function useAnalyticsData() {
+export function useAnalyticsData(options: AnalyticsHookOptions = {}) {
+  const pollMs = Math.max(0, options.pollMs ?? 0);
   const [data, setData] = useState<AnalyticsPayload>(EMPTY_ANALYTICS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
 
-    async function load() {
-      setLoading(true);
+    async function load(showLoader = false) {
+      if (showLoader) {
+        setLoading(true);
+      }
       setError(null);
       try {
         const payload = await fetchAnalyticsPayload();
@@ -37,25 +45,39 @@ export function useAnalyticsData() {
       }
     }
 
-    void load();
+    void load(true);
+
+    if (pollMs > 0) {
+      intervalId = setInterval(() => {
+        void load(false);
+      }, pollMs);
+    }
+
     return () => {
       mounted = false;
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
     };
-  }, []);
+  }, [pollMs]);
 
   return { data, loading, error };
 }
 
-export function useAnalyticsDataWithAi() {
+export function useAnalyticsDataWithAi(options: AnalyticsHookOptions = {}) {
+  const pollMs = Math.max(0, options.pollMs ?? 0);
   const [data, setData] = useState<AnalyticsPayload>(EMPTY_ANALYTICS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
 
-    async function load() {
-      setLoading(true);
+    async function load(showLoader = false) {
+      if (showLoader) {
+        setLoading(true);
+      }
       setError(null);
       try {
         const payload = await fetchAnalyticsPayloadWithAi();
@@ -84,11 +106,21 @@ export function useAnalyticsDataWithAi() {
       }
     }
 
-    void load();
+    void load(true);
+
+    if (pollMs > 0) {
+      intervalId = setInterval(() => {
+        void load(false);
+      }, pollMs);
+    }
+
     return () => {
       mounted = false;
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
     };
-  }, []);
+  }, [pollMs]);
 
   return { data, loading, error };
 }
