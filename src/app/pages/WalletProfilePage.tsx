@@ -159,6 +159,44 @@ export function WalletProfilePage() {
     return Number((analysis.risk_score - ratio).toFixed(1));
   }, [analysis]);
 
+  const suspiciousRatio = useMemo(() => {
+    if (!analysis || analysis.total_transactions <= 0) return 0;
+    return (analysis.suspicious_transactions.length / analysis.total_transactions) * 100;
+  }, [analysis]);
+
+  const profileScores = useMemo(() => {
+    if (!analysis) {
+      return {
+        threatExposure: 0,
+        behavioralVolatility: 0,
+        networkConcentration: 0,
+        confidenceIndex: 0,
+      };
+    }
+
+    const threatExposure = Math.max(0, Math.min(100, analysis.risk_score));
+
+    const behaviorShiftBoost = aiFeatures?.models.behavior_shift_detector?.behavior_shift_detected ? 18 : 0;
+    const anomalyBoost = aiFeatures?.models.transaction_anomaly_detector?.is_anomaly ? 15 : 0;
+    const behavioralVolatility = Math.max(0, Math.min(100, suspiciousRatio * 1.2 + behaviorShiftBoost + anomalyBoost));
+
+    const topCounterpartyShare = counterparties.length > 0
+      ? (counterparties[0].txCount / Math.max(1, analysis.total_transactions)) * 100
+      : 0;
+    const networkConcentration = Math.max(0, Math.min(100, topCounterpartyShare * 1.7));
+
+    const aiConfidenceBoost = aiFeatures ? 18 : 0;
+    const sampleStrength = Math.min(40, Math.log10(Math.max(1, analysis.total_transactions)) * 16);
+    const confidenceIndex = Math.max(5, Math.min(100, 35 + sampleStrength + aiConfidenceBoost));
+
+    return {
+      threatExposure,
+      behavioralVolatility,
+      networkConcentration,
+      confidenceIndex,
+    };
+  }, [analysis, aiFeatures, suspiciousRatio, counterparties]);
+
   const firstSeen = transactions.at(-1)?.timestamp;
   const lastSeen = transactions.at(0)?.timestamp;
 
@@ -259,31 +297,78 @@ export function WalletProfilePage() {
 
       {analysis && (
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <div style={{ background: "linear-gradient(135deg, #090f1e 0%, #0a1628 100%)", border: "1px solid #1a3050", borderRadius: 12, padding: 20 }}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-              <div style={{ flex: 2, minWidth: 260 }}>
-                <div style={{ color: "#7aa6ca", fontSize: 11, letterSpacing: "0.06em", marginBottom: 6 }}>WALLET IDENTITY</div>
-                <div style={{ color: "#dff0ff", fontSize: 16, fontWeight: 700, marginBottom: 5 }}>{analysis.wallet_address}</div>
+          <div style={{ background: "linear-gradient(145deg, #091227 0%, #0a1a31 55%, #0d1d35 100%)", border: "1px solid #204164", borderRadius: 14, padding: 20 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 1.5fr) minmax(240px, 1fr)", gap: 18, alignItems: "center" }}>
+              <div>
+                <div style={{ color: "#7aa6ca", fontSize: 11, letterSpacing: "0.08em", marginBottom: 6 }}>WALLET IDENTITY</div>
+                <div style={{ color: "#dff0ff", fontSize: 16, fontWeight: 700, marginBottom: 5, fontFamily: "'JetBrains Mono', monospace" }}>{analysis.wallet_address}</div>
                 <div style={{ color: "#86adce", fontSize: 11 }}>
                   First seen {firstSeen ? timeAgo(firstSeen) : "N/A"} • Last activity {lastSeen ? timeAgo(lastSeen) : "N/A"}
                 </div>
+
+                <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ border: "1px solid #2a4b70", borderRadius: 999, padding: "6px 10px", fontSize: 10, color: getRiskColor(analysis.risk_score), background: "rgba(5,12,22,0.7)" }}>
+                    {getRiskLabel(analysis.risk_score)} RISK
+                  </span>
+                  <span style={{ border: "1px solid #2a4b70", borderRadius: 999, padding: "6px 10px", fontSize: 10, color: "#98c0e2", background: "rgba(5,12,22,0.7)" }}>
+                    Suspicious Ratio {suspiciousRatio.toFixed(1)}%
+                  </span>
+                  <span style={{ border: "1px solid #2a4b70", borderRadius: 999, padding: "6px 10px", fontSize: 10, color: riskDelta !== null && riskDelta > 0 ? "#ff9f86" : "#8dd9a9", background: "rgba(5,12,22,0.7)" }}>
+                    Risk Drift {riskDelta === null ? "N/A" : `${riskDelta >= 0 ? "+" : ""}${riskDelta}`}
+                  </span>
+                </div>
               </div>
 
-              <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ color: "#7aa6ca", fontSize: 11, marginBottom: 6 }}>Risk Score</div>
-                <div style={{ color: getRiskColor(analysis.risk_score), fontSize: 21, fontWeight: 800 }}>
-                  {analysis.risk_score.toFixed(1)}
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <div
+                  style={{
+                    width: 142,
+                    height: 142,
+                    borderRadius: "50%",
+                    background: `conic-gradient(${getRiskColor(analysis.risk_score)} ${Math.max(4, analysis.risk_score)}%, #113050 ${Math.max(4, analysis.risk_score)}% 100%)`,
+                    display: "grid",
+                    placeItems: "center",
+                    boxShadow: "0 0 0 6px rgba(8,17,31,0.8)",
+                  }}
+                >
+                  <div style={{ width: 108, height: 108, borderRadius: "50%", background: "#081426", border: "1px solid #23466d", display: "grid", placeItems: "center", textAlign: "center" }}>
+                    <div>
+                      <div style={{ color: getRiskColor(analysis.risk_score), fontSize: 24, fontWeight: 800, lineHeight: 1 }}>{analysis.risk_score.toFixed(1)}</div>
+                      <div style={{ color: "#88afcf", fontSize: 10, marginTop: 2 }}>PROFILE SCORE</div>
+                    </div>
+                  </div>
                 </div>
-                <div style={{ color: "#92b7d7", fontSize: 11 }}>{getRiskLabel(analysis.risk_score)}</div>
               </div>
+            </div>
 
-              <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ color: "#7aa6ca", fontSize: 11, marginBottom: 6 }}>Risk Drift</div>
-                <div style={{ color: riskDelta !== null && riskDelta > 0 ? "#ff8c70" : "#84d6a3", fontSize: 19, fontWeight: 700 }}>
-                  {riskDelta === null ? "N/A" : `${riskDelta >= 0 ? "+" : ""}${riskDelta}`}
+            <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+              {[{
+                title: "Threat Exposure",
+                value: profileScores.threatExposure,
+                color: getRiskColor(profileScores.threatExposure),
+              }, {
+                title: "Behavioral Volatility",
+                value: profileScores.behavioralVolatility,
+                color: profileScores.behavioralVolatility >= 60 ? "#ff8e77" : "#8ec5ff",
+              }, {
+                title: "Network Concentration",
+                value: profileScores.networkConcentration,
+                color: profileScores.networkConcentration >= 50 ? "#f6c97f" : "#8edaa7",
+              }, {
+                title: "Confidence Index",
+                value: profileScores.confidenceIndex,
+                color: "#8ec5ff",
+              }].map((score) => (
+                <div key={score.title} style={{ background: "#061121", border: "1px solid #173250", borderRadius: 10, padding: "10px 11px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <div style={{ color: "#6d94ba", fontSize: 10 }}>{score.title}</div>
+                    <div style={{ color: score.color, fontSize: 11, fontWeight: 700 }}>{score.value.toFixed(1)}</div>
+                  </div>
+                  <div style={{ height: 6, borderRadius: 999, background: "#102741", overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${Math.max(2, score.value)}%`, background: `linear-gradient(90deg, ${score.color}, #4cb1ff)` }} />
+                  </div>
                 </div>
-                <div style={{ color: "#92b7d7", fontSize: 11 }}>score minus suspicious ratio baseline</div>
-              </div>
+              ))}
             </div>
 
             <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
@@ -318,7 +403,7 @@ export function WalletProfilePage() {
             )}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
             <div style={{ background: "linear-gradient(135deg, #090f1e 0%, #0a1628 100%)", border: "1px solid #1a3050", borderRadius: 12, padding: 14, minHeight: 260 }}>
               <div style={{ color: "#8cb3d4", fontSize: 11, letterSpacing: "0.06em", marginBottom: 8 }}>TRANSACTION VOLUME TREND</div>
               <div style={{ width: "100%", height: 220 }}>
@@ -362,7 +447,7 @@ export function WalletProfilePage() {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
             <div style={{ background: "linear-gradient(135deg, #090f1e 0%, #0a1628 100%)", border: "1px solid #1a3050", borderRadius: 12, padding: 14, minHeight: 250 }}>
               <div style={{ color: "#8cb3d4", fontSize: 11, letterSpacing: "0.06em", marginBottom: 8 }}>TOP COUNTERPARTIES</div>
               <div style={{ width: "100%", height: 210 }}>

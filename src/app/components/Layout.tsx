@@ -11,8 +11,6 @@ import {
   Shield,
   LogOut,
   Settings,
-  ChevronRight,
-  Zap,
   Activity,
   Menu,
   X,

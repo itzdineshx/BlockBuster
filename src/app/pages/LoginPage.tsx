@@ -145,7 +145,7 @@ function BlockchainBackground({ canvasRef }: { canvasRef: React.RefObject<HTMLCa
   return (
     <canvas
       ref={canvasRef}
-      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.6 }}
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%"}}
     />
   );
 }
