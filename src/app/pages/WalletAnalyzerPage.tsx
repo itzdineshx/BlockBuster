@@ -896,6 +896,119 @@ export function WalletAnalyzerPage() {
     };
   }, [analysis, transactions, suspiciousHashes, aiFeatures, counterparties]);
 
+  const sidePanelFingerprint = useMemo(() => {
+    if (!analysis) return null;
+    const me = analysis.wallet_address.toLowerCase();
+
+    const counterpartyCounts = new Map<string, number>();
+    let inbound = 0;
+    let outbound = 0;
+
+    transactions.forEach((tx) => {
+      const from = tx.from.toLowerCase();
+      const to = tx.to.toLowerCase();
+      const other = from === me ? to : from;
+      if (other && other !== me) {
+        counterpartyCounts.set(other, (counterpartyCounts.get(other) ?? 0) + 1);
+      }
+      if (to === me) inbound += 1;
+      if (from === me) outbound += 1;
+    });
+
+    const total = Math.max(1, inbound + outbound);
+    const counts = [...counterpartyCounts.values()];
+    const entropyRaw = counts.reduce((sum, count) => {
+      const p = count / Math.max(1, transactions.length);
+      return p > 0 ? sum - p * Math.log2(p) : sum;
+    }, 0);
+    const entropyMax = Math.log2(Math.max(2, counts.length));
+    const counterpartyEntropy = entropyMax > 0 ? (entropyRaw / entropyMax) * 100 : 0;
+
+    const directionSkew = Math.abs(inbound - outbound) / total;
+
+    const hourlyCounts = new Map<number, number>();
+    transactions.forEach((tx) => {
+      const dt = new Date(tx.timestamp);
+      if (Number.isNaN(dt.getTime())) return;
+      const hour = dt.getHours();
+      hourlyCounts.set(hour, (hourlyCounts.get(hour) ?? 0) + 1);
+    });
+    const values = [...hourlyCounts.values()];
+    const avgHourly = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+    const maxHourly = values.length ? Math.max(...values) : 0;
+    const burstIndex = avgHourly > 0 ? (maxHourly / avgHourly) * 25 : 0;
+
+    const suspiciousDensity = transactions.length
+      ? (suspiciousHashes.size / transactions.length) * 100
+      : 0;
+
+    return {
+      counterpartyEntropy: Number(Math.max(0, Math.min(100, counterpartyEntropy)).toFixed(1)),
+      directionSkew: Number((directionSkew * 100).toFixed(1)),
+      burstIndex: Number(Math.max(0, Math.min(100, burstIndex)).toFixed(1)),
+      suspiciousDensity: Number(Math.max(0, Math.min(100, suspiciousDensity)).toFixed(1)),
+      outboundBias: outbound >= inbound,
+    };
+  }, [analysis, transactions, suspiciousHashes]);
+
+  const sidePanelHeatClock = useMemo(() => {
+    const buckets = Array.from({ length: 24 }, (_, hour) => ({ hour, total: 0, suspicious: 0 }));
+
+    transactions.forEach((tx) => {
+      const dt = new Date(tx.timestamp);
+      if (Number.isNaN(dt.getTime())) return;
+      const hour = dt.getHours();
+      buckets[hour].total += 1;
+      if (suspiciousHashes.has(tx.hash)) buckets[hour].suspicious += 1;
+    });
+
+    const maxTotal = Math.max(1, ...buckets.map((b) => b.total));
+    return buckets.map((bucket) => ({
+      ...bucket,
+      intensity: Number(((bucket.total / maxTotal) * 100).toFixed(1)),
+      risky: bucket.total > 0 && bucket.suspicious / bucket.total >= 0.35,
+    }));
+  }, [transactions, suspiciousHashes]);
+
+  const sidePanelPlaybook = useMemo(() => {
+    if (!analysis) return [] as Array<{ step: string; confidence: number; eta: string; severity: "high" | "medium" | "low" }>;
+
+    const anomaly = aiFeatures?.models.transaction_anomaly_detector?.is_anomaly ?? false;
+    const behaviorShift = aiFeatures?.models.behavior_shift_detector?.behavior_shift_detected ?? false;
+    const priority = aiFeatures?.models.alert_prioritizer?.priority_score ?? 0;
+    const forecastScore = upcomingTxPrediction?.score ?? 0;
+
+    const baseConfidence = Math.max(52, Math.min(97, analysis.risk_score * 0.55 + forecastScore * 0.25 + priority * 0.2));
+    const steps: Array<{ step: string; confidence: number; eta: string; severity: "high" | "medium" | "low" }> = [];
+
+    if (analysis.risk_score >= 75 || forecastScore >= 70) {
+      steps.push({
+        step: "Place wallet in immediate containment watch",
+        confidence: Number(baseConfidence.toFixed(1)),
+        eta: "0-5 min",
+        severity: "high",
+      });
+    }
+
+    if (anomaly || behaviorShift) {
+      steps.push({
+        step: "Trigger forensic snapshot and transaction replay",
+        confidence: Number((baseConfidence - 4).toFixed(1)),
+        eta: "5-10 min",
+        severity: "medium",
+      });
+    }
+
+    steps.push({
+      step: "Notify reviewer with explainability packet",
+      confidence: Number((baseConfidence - 8).toFixed(1)),
+      eta: "10-15 min",
+      severity: analysis.risk_score >= 55 ? "medium" : "low",
+    });
+
+    return steps.slice(0, 3);
+  }, [analysis, aiFeatures, upcomingTxPrediction]);
+
   const multiHopGraph = useMemo(() => {
     if (!analysis) return null;
     const me = analysis.wallet_address.toLowerCase();
@@ -1782,6 +1895,80 @@ export function WalletAnalyzerPage() {
                         ))}
                       </div>
                     )}
+                  </div>
+                )}
+
+                {sidePanelFingerprint && (
+                  <div style={{ marginBottom: 14, background: "#050912", border: "1px solid #0f1e35", borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ color: "#7a9cc0", fontSize: 10, letterSpacing: "0.05em", marginBottom: 8 }}>BEHAVIORAL FINGERPRINT</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div style={{ background: "#071021", border: "1px solid #173453", borderRadius: 7, padding: "7px 8px" }}>
+                        <div style={{ color: "#6f99bc", fontSize: 9 }}>Counterparty Entropy</div>
+                        <div style={{ color: "#d8ecff", fontSize: 12, fontWeight: 700 }}>{sidePanelFingerprint.counterpartyEntropy.toFixed(1)}%</div>
+                      </div>
+                      <div style={{ background: "#071021", border: "1px solid #173453", borderRadius: 7, padding: "7px 8px" }}>
+                        <div style={{ color: "#6f99bc", fontSize: 9 }}>Direction Skew</div>
+                        <div style={{ color: "#d8ecff", fontSize: 12, fontWeight: 700 }}>{sidePanelFingerprint.directionSkew.toFixed(1)}%</div>
+                      </div>
+                      <div style={{ background: "#071021", border: "1px solid #173453", borderRadius: 7, padding: "7px 8px" }}>
+                        <div style={{ color: "#6f99bc", fontSize: 9 }}>Burst Index</div>
+                        <div style={{ color: "#d8ecff", fontSize: 12, fontWeight: 700 }}>{sidePanelFingerprint.burstIndex.toFixed(1)}</div>
+                      </div>
+                      <div style={{ background: "#071021", border: "1px solid #173453", borderRadius: 7, padding: "7px 8px" }}>
+                        <div style={{ color: "#6f99bc", fontSize: 9 }}>Suspicious Density</div>
+                        <div style={{ color: sidePanelFingerprint.suspiciousDensity >= 30 ? "#ff9f9f" : "#9de6c2", fontSize: 12, fontWeight: 700 }}>
+                          {sidePanelFingerprint.suspiciousDensity.toFixed(1)}%
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 8, color: "#89afcf", fontSize: 10 }}>
+                      Profile bias: {sidePanelFingerprint.outboundBias ? "outbound-heavy dispersion" : "inbound-heavy concentration"}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ marginBottom: 14, background: "#050912", border: "1px solid #0f1e35", borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ color: "#7a9cc0", fontSize: 10, letterSpacing: "0.05em", marginBottom: 8 }}>INCIDENT HEAT CLOCK (24H)</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(0, 1fr))", gap: 4 }}>
+                    {sidePanelHeatClock.map((slot) => {
+                      const alpha = 0.14 + slot.intensity / 130;
+                      const bg = slot.risky
+                        ? `rgba(255, 107, 107, ${Math.min(0.9, alpha + 0.18)})`
+                        : `rgba(47, 149, 255, ${Math.min(0.85, alpha)})`;
+                      return (
+                        <div
+                          key={slot.hour}
+                          title={`${slot.hour.toString().padStart(2, "0")}:00 · total ${slot.total} · suspicious ${slot.suspicious}`}
+                          style={{
+                            height: 16,
+                            borderRadius: 4,
+                            border: slot.risky ? "1px solid rgba(255, 107, 107, 0.75)" : "1px solid rgba(47, 149, 255, 0.45)",
+                            background: bg,
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", color: "#89afcf", fontSize: 9 }}>
+                    <span>00:00</span>
+                    <span>12:00</span>
+                    <span>23:00</span>
+                  </div>
+                </div>
+
+                {sidePanelPlaybook.length > 0 && (
+                  <div style={{ marginBottom: 14, background: "#050912", border: "1px solid #0f1e35", borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ color: "#7a9cc0", fontSize: 10, letterSpacing: "0.05em", marginBottom: 8 }}>AUTONOMOUS PLAYBOOK RECOMMENDER</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                      {sidePanelPlaybook.map((entry, idx) => (
+                        <div key={`${entry.step}_${idx}`} style={{ background: "#071021", border: `1px solid ${entry.severity === "high" ? "#ff6b6b66" : entry.severity === "medium" ? "#ffb86b66" : "#2f95ff66"}`, borderRadius: 7, padding: "7px 8px" }}>
+                          <div style={{ color: "#d8ecff", fontSize: 10, marginBottom: 3 }}>{idx + 1}. {entry.step}</div>
+                          <div style={{ color: "#89afcf", fontSize: 9 }}>
+                            Confidence {entry.confidence.toFixed(1)}% · ETA {entry.eta}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
