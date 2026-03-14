@@ -8,7 +8,6 @@ import {
   Search,
   Bell,
   User,
-  Shield,
   LogOut,
   Settings,
   Activity,
@@ -101,27 +100,25 @@ export function Layout() {
             minHeight: 68,
           }}
         >
-          <div
+          <img
+            src="/logo.png"
+            alt="BlockBuster"
             style={{
               width: 36,
               height: 36,
-              background: "linear-gradient(135deg, #00ff9d22, #00ff9d44)",
-              border: "1px solid #00ff9d55",
               borderRadius: 8,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              objectFit: "cover",
+              border: "1px solid #1a3050",
+              boxShadow: "0 4px 12px rgba(12, 88, 190, 0.35)",
               flexShrink: 0,
             }}
-          >
-            <Shield size={18} color="#00ff9d" />
-          </div>
+          />
           {sidebarOpen && (
             <div style={{ overflow: "hidden" }}>
               <div style={{ color: "#00ff9d", fontSize: 13, fontWeight: 700, letterSpacing: "0.05em", whiteSpace: "nowrap" }}>
-                CryptoFlow
+                BlockBuster
               </div>
-              <div style={{ color: "#5b7fa6", fontSize: 10, whiteSpace: "nowrap" }}>ANALYZER v2.1</div>
+              <div style={{ color: "#5b7fa6", fontSize: 10, whiteSpace: "nowrap" }}>RISK ENGINE v2.1</div>
             </div>
           )}
           <button

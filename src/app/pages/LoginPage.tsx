@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { Shield, Eye, EyeOff, Lock, Mail, Zap } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail, Zap } from "lucide-react";
 import { setCredentialSession, setWalletSession } from "../utils/walletSession";
 
 type EthereumProvider = {
@@ -238,21 +238,17 @@ export function LoginPage() {
         >
           {/* Logo */}
           <div style={{ textAlign: "center", marginBottom: 32 }}>
-            <div
+            <img
+              src="/logo.png"
+              alt="BlockBuster"
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 64,
-                height: 64,
-                background: "linear-gradient(135deg, rgba(0,255,157,0.1), rgba(0,255,157,0.2))",
-                border: "1px solid rgba(0,255,157,0.3)",
-                borderRadius: 16,
-                marginBottom: 16,
+                width: "100%",
+                maxWidth: 300,
+                height: "auto",
+                marginBottom: 14,
+                filter: "drop-shadow(0 10px 26px rgba(0, 120, 255, 0.25))",
               }}
-            >
-              <Shield size={28} color="#00ff9d" />
-            </div>
+            />
             <h1
               style={{
                 color: "#e2f0ff",
@@ -262,10 +258,10 @@ export function LoginPage() {
                 marginBottom: 6,
               }}
             >
-              CryptoFlow <span style={{ color: "#00ff9d" }}>Analyzer</span>
+              BlockBuster <span style={{ color: "#00ff9d" }}>Risk Intelligence</span>
             </h1>
             <p style={{ color: "#5b7fa6", fontSize: 12, letterSpacing: "0.05em" }}>
-              AI-POWERED BLOCKCHAIN TRANSACTION MONITORING
+              AI-POWERED BLOCKCHAIN THREAT DETECTION
             </p>
           </div>
 
