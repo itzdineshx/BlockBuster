@@ -144,12 +144,18 @@ def analytics():
                     "errors": model_errors,
                 }
             except Exception as exc:
+                error_message = str(exc)
+                if "_fill_dtype" in error_message and "SimpleImputer" in error_message:
+                    error_message = (
+                        "AI model artifacts are incompatible with the current scikit-learn runtime. "
+                        "Retrain models via /api/ml/train-all and redeploy updated artifacts."
+                    )
                 payload["aiInsights"] = {}
                 payload["aiIntegration"] = {
                     "enabled": False,
                     "scored_wallets": 0,
                     "scored_limit": ai_limit,
-                    "errors": [{"address": "*", "error": f"AI enrichment unavailable: {exc}"}],
+                    "errors": [{"address": "*", "error": f"AI enrichment unavailable: {error_message}"}],
                 }
         return jsonify(payload), 200
     except FileNotFoundError as exc:

@@ -106,11 +106,227 @@ export function TransactionFlowPage() {
     return transactions.filter((t) => t.from === selectedNode.id || t.to === selectedNode.id);
   }, [selectedNode, transactions]);
 
+  const selectedSignals = useMemo(() => {
+    if (!selectedNode) {
+      return {
+        suspiciousCount: 0,
+        suspiciousRatio: 0,
+        totalVolume: 0,
+        linkedHighRisk: 0,
+      };
+    }
+
+    const suspiciousCount = selectedTxs.filter((tx) => tx.suspicious).length;
+    const suspiciousRatio = selectedTxs.length ? (suspiciousCount / selectedTxs.length) * 100 : 0;
+    const totalVolume = selectedTxs.reduce((sum, tx) => sum + tx.amount, 0);
+
+    const linkedHighRisk = selectedTxs.reduce((count, tx) => {
+      const linkedNodeId = tx.from === selectedNode.id ? tx.to : tx.from;
+      const linkedNode = walletNodes.find((node) => node.id === linkedNodeId);
+      return count + (linkedNode && linkedNode.risk >= 60 ? 1 : 0);
+    }, 0);
+
+    return {
+      suspiciousCount,
+      suspiciousRatio,
+      totalVolume,
+      linkedHighRisk,
+    };
+  }, [selectedNode, selectedTxs, walletNodes]);
+
+  const selectedContext = useMemo(() => {
+    if (!selectedNode) {
+      return {
+        incomingCount: 0,
+        outgoingCount: 0,
+        uniqueCounterparties: 0,
+        topCounterpartyLabel: "-",
+        topCounterpartyTxCount: 0,
+        largestTxAmount: 0,
+        largestTxDirection: "-",
+        latestTxTime: "-",
+        dominantSuspiciousReason: null as string | null,
+      };
+    }
+
+    const counterpartyCountMap = new Map<string, number>();
+    let incomingCount = 0;
+    let outgoingCount = 0;
+    let largestTxAmount = 0;
+    let largestTxDirection = "-";
+    let latestTxTime = "-";
+    let latestMs = -1;
+
+    const suspiciousReasonCounts = new Map<string, number>();
+
+    selectedTxs.forEach((tx) => {
+      const isOutgoing = tx.from === selectedNode.id;
+      if (isOutgoing) {
+        outgoingCount += 1;
+      } else {
+        incomingCount += 1;
+      }
+
+      const counterpartyId = isOutgoing ? tx.to : tx.from;
+      counterpartyCountMap.set(counterpartyId, (counterpartyCountMap.get(counterpartyId) ?? 0) + 1);
+
+      if (tx.amount > largestTxAmount) {
+        largestTxAmount = tx.amount;
+        largestTxDirection = isOutgoing ? "Outgoing" : "Incoming";
+      }
+
+      const tsMs = new Date(tx.timestamp).getTime();
+      if (Number.isFinite(tsMs) && tsMs > latestMs) {
+        latestMs = tsMs;
+        latestTxTime = timeAgo(tx.timestamp);
+      }
+
+      if (tx.suspicious && tx.reason && tx.reason !== "Normal") {
+        suspiciousReasonCounts.set(tx.reason, (suspiciousReasonCounts.get(tx.reason) ?? 0) + 1);
+      }
+    });
+
+    const topCounterpartyEntry = [...counterpartyCountMap.entries()].sort((a, b) => b[1] - a[1])[0];
+    const topCounterpartyNode = topCounterpartyEntry
+      ? walletNodes.find((node) => node.id === topCounterpartyEntry[0])
+      : null;
+
+    const dominantReasonEntry = [...suspiciousReasonCounts.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
+
+    return {
+      incomingCount,
+      outgoingCount,
+      uniqueCounterparties: counterpartyCountMap.size,
+      topCounterpartyLabel: topCounterpartyNode?.label ?? "Unknown",
+      topCounterpartyTxCount: topCounterpartyEntry?.[1] ?? 0,
+      largestTxAmount,
+      largestTxDirection,
+      latestTxTime,
+      dominantSuspiciousReason: dominantReasonEntry?.[0] ?? null,
+    };
+  }, [selectedNode, selectedTxs, walletNodes]);
+
   const selectedAi = useMemo(() => {
     if (!selectedNode?.address) return null;
     const key = selectedNode.address.toLowerCase();
     return data.aiInsights?.[key] ?? null;
   }, [data.aiInsights, selectedNode]);
+
+  const selectedXai = useMemo(() => {
+    if (!selectedNode) return null;
+
+    const aiDecision = selectedAi?.explainability?.decision;
+    const aiSummary = selectedAi?.explainability?.summary;
+    const aiReasons = selectedAi?.explainability?.reasons ?? [];
+
+    const modelRisk = selectedAi?.models.wallet_risk_classifier?.risk_score ?? selectedNode.risk;
+    const priorityScore = selectedAi?.models.alert_prioritizer?.priority_score ?? selectedNode.risk;
+    const anomalyDetected = Boolean(selectedAi?.models.transaction_anomaly_detector?.is_anomaly);
+    const behaviorShiftDetected = Boolean(selectedAi?.models.behavior_shift_detector?.behavior_shift_detected);
+
+    const confidence = Math.max(
+      35,
+      Math.min(
+        98,
+        42 +
+          (selectedSignals.suspiciousRatio * 0.25) +
+          (selectedSignals.linkedHighRisk * 4) +
+          (anomalyDetected ? 10 : 0) +
+          (behaviorShiftDetected ? 8 : 0) +
+          (priorityScore * 0.22)
+      )
+    );
+
+    const decision = aiDecision ?? (
+      selectedNode.risk >= 80 || selectedSignals.suspiciousRatio >= 45
+        ? "flagged"
+        : selectedNode.risk >= 45 || selectedSignals.suspiciousRatio >= 20
+          ? "monitor"
+          : "low_risk"
+    );
+
+    const decisionLabel = decision === "flagged"
+      ? "Flagged"
+      : decision === "monitor"
+        ? "Monitor"
+        : "Low Risk";
+
+    const fallbackSummary = selectedNode.flagged
+      ? `Wallet is flagged with concentrated risk exposure across ${selectedContext.uniqueCounterparties} counterparties.`
+      : selectedNode.risk >= 60
+        ? `Wallet exhibits elevated risk behavior with ${selectedSignals.suspiciousRatio.toFixed(1)}% suspicious linked flow.`
+        : "Wallet currently presents low-to-moderate observable risk based on observed flow behavior.";
+
+    const fallbackReasons: string[] = [];
+    if (selectedSignals.suspiciousRatio >= 30) {
+      fallbackReasons.push(`High suspicious transaction share (${selectedSignals.suspiciousRatio.toFixed(1)}%).`);
+    }
+    if (selectedSignals.linkedHighRisk >= 2) {
+      fallbackReasons.push(`Connected to ${selectedSignals.linkedHighRisk} high-risk counterparties.`);
+    }
+    if (selectedSignals.totalVolume >= 25) {
+      fallbackReasons.push(`Large linked transaction volume (${selectedSignals.totalVolume.toFixed(4)} ETH).`);
+    }
+    if (selectedNode.flagged) {
+      fallbackReasons.push("Address appears in flagged intelligence context.");
+    }
+    if (selectedContext.dominantSuspiciousReason) {
+      fallbackReasons.push(`Dominant suspicious pattern: ${selectedContext.dominantSuspiciousReason}.`);
+    }
+    if (!fallbackReasons.length) {
+      fallbackReasons.push("No dominant anomaly signal detected across linked flows.");
+    }
+
+    const driverRows = [
+      {
+        label: "Suspicious Flow Ratio",
+        value: `${selectedSignals.suspiciousRatio.toFixed(1)}%`,
+        impact: selectedSignals.suspiciousRatio >= 35 ? "High" : selectedSignals.suspiciousRatio >= 15 ? "Medium" : "Low",
+      },
+      {
+        label: "High-Risk Counterparties",
+        value: `${selectedSignals.linkedHighRisk}`,
+        impact: selectedSignals.linkedHighRisk >= 3 ? "High" : selectedSignals.linkedHighRisk >= 1 ? "Medium" : "Low",
+      },
+      {
+        label: "Anomaly Detector",
+        value: anomalyDetected ? "Detected" : "Not detected",
+        impact: anomalyDetected ? "High" : "Low",
+      },
+      {
+        label: "Behavior Shift",
+        value: behaviorShiftDetected ? "Detected" : "Stable",
+        impact: behaviorShiftDetected ? "Medium" : "Low",
+      },
+      {
+        label: "Priority Score",
+        value: priorityScore.toFixed(1),
+        impact: priorityScore >= 70 ? "High" : priorityScore >= 45 ? "Medium" : "Low",
+      },
+      {
+        label: "Model Risk",
+        value: modelRisk.toFixed(1),
+        impact: modelRisk >= 70 ? "High" : modelRisk >= 45 ? "Medium" : "Low",
+      },
+    ];
+
+    const contextualEvidence = [
+      `Network footprint: ${selectedContext.uniqueCounterparties} counterparties (${selectedContext.outgoingCount} out / ${selectedContext.incomingCount} in).`,
+      `Most frequent counterparty: ${selectedContext.topCounterpartyLabel} (${selectedContext.topCounterpartyTxCount} tx).`,
+      `Largest linked transfer: ${selectedContext.largestTxAmount.toFixed(4)} ETH (${selectedContext.largestTxDirection}).`,
+      `Latest activity observed: ${selectedContext.latestTxTime}.`,
+    ];
+
+    return {
+      decision,
+      decisionLabel,
+      confidence,
+      summary: aiSummary ?? fallbackSummary,
+      reasons: aiReasons.length ? aiReasons : fallbackReasons,
+      drivers: driverRows,
+      contextualEvidence,
+    };
+  }, [selectedAi, selectedContext, selectedNode, selectedSignals]);
 
   return (
     <div style={{ padding: "28px 32px", fontFamily: "'Space Grotesk', sans-serif", background: "#050912", minHeight: "100%", display: "flex", flexDirection: "column" }}>
@@ -460,6 +676,66 @@ export function TransactionFlowPage() {
                       <div style={{ color: "#5b7fa6", fontSize: 11 }}>Alert Priority</div>
                       <div style={{ color: "#ff7700", fontSize: 11, fontWeight: 700, textAlign: "right" }}>
                         {selectedAi.models.alert_prioritizer?.priority_score?.toFixed(1) ?? "-"}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {selectedXai && (
+                  <div style={{ marginBottom: 16, border: "1px solid #1a3050", borderRadius: 8, padding: "10px 12px", background: "rgba(5,9,18,0.6)" }}>
+                    <div style={{ color: "#7a9cc0", fontSize: 11, marginBottom: 7 }}>XAI NODE EXPLANATION</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: "0.06em",
+                          color: selectedXai.decision === "flagged" ? "#ff7188" : selectedXai.decision === "monitor" ? "#f5c518" : "#80d9a1",
+                        }}
+                      >
+                        DECISION: {selectedXai.decisionLabel.toUpperCase()}
+                      </span>
+                      <span style={{ color: "#8fb4d8", fontSize: 10 }}>
+                        Confidence {selectedXai.confidence.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div style={{ color: "#d6e8fb", fontSize: 12, lineHeight: 1.45, marginBottom: 8 }}>{selectedXai.summary}</div>
+                    {selectedXai.reasons.slice(0, 4).map((reason) => (
+                      <div key={reason} style={{ color: "#8fb4d8", fontSize: 11, lineHeight: 1.45 }}>
+                        • {reason}
+                      </div>
+                    ))}
+                    <div style={{ marginTop: 10, borderTop: "1px solid #173250", paddingTop: 8 }}>
+                      <div style={{ color: "#6f96ba", fontSize: 10, marginBottom: 5 }}>KEY DRIVERS</div>
+                      {selectedXai.drivers.slice(0, 5).map((driver) => (
+                        <div key={driver.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                          <span style={{ color: "#7ea4c8", fontSize: 10 }}>{driver.label}</span>
+                          <span style={{ color: "#dff0ff", fontSize: 10 }}>
+                            {driver.value} • {driver.impact}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 10, borderTop: "1px solid #173250", paddingTop: 8 }}>
+                      <div style={{ color: "#6f96ba", fontSize: 10, marginBottom: 5 }}>GRAPH CONTEXT</div>
+                      {selectedXai.contextualEvidence.slice(0, 4).map((evidence) => (
+                        <div key={evidence} style={{ color: "#87accf", fontSize: 10, lineHeight: 1.4 }}>
+                          • {evidence}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 9, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div style={{ color: "#5b7fa6", fontSize: 11 }}>Suspicious Linked TX</div>
+                      <div style={{ color: "#dff0ff", fontSize: 11, textAlign: "right" }}>
+                        {selectedSignals.suspiciousCount}/{selectedTxs.length || 0}
+                      </div>
+                      <div style={{ color: "#5b7fa6", fontSize: 11 }}>Suspicious Ratio</div>
+                      <div style={{ color: "#dff0ff", fontSize: 11, textAlign: "right" }}>
+                        {selectedSignals.suspiciousRatio.toFixed(1)}%
+                      </div>
+                      <div style={{ color: "#5b7fa6", fontSize: 11 }}>Linked Volume</div>
+                      <div style={{ color: "#dff0ff", fontSize: 11, textAlign: "right" }}>
+                        {selectedSignals.totalVolume.toFixed(4)} ETH
                       </div>
                     </div>
                   </div>

@@ -43,7 +43,8 @@ export async function fetchAnalyticsPayload(): Promise<AnalyticsPayload> {
 }
 
 export async function fetchAnalyticsPayloadWithAi(): Promise<AnalyticsPayload> {
-  const response = await fetch(`${getApiBaseUrl()}/api/analytics?include_ai=true&ai_limit=20`);
+  // Request enrichment for the full analytics sample so every graph node can expose XAI details.
+  const response = await fetch(`${getApiBaseUrl()}/api/analytics?include_ai=true&ai_limit=200`);
   const payload = (await response.json().catch(() => null)) as AnalyticsPayload | { error?: string } | null;
 
   if (!response.ok) {

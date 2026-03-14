@@ -64,15 +64,17 @@ export function useAnalyticsDataWithAi() {
         }
       } catch (err) {
         // Fall back to the standard analytics endpoint when AI enrichment is unavailable.
+        let fallbackLoaded = false;
         try {
           const fallback = await fetchAnalyticsPayload();
           if (mounted) {
             setData(fallback);
+            fallbackLoaded = true;
           }
         } catch {
           // Keep original error below.
         }
-        if (mounted) {
+        if (mounted && !fallbackLoaded) {
           setError(err instanceof Error ? err.message : "Unable to load AI analytics data.");
         }
       } finally {
